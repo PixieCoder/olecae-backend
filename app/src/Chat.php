@@ -12,7 +12,7 @@ class Chat implements MessageComponentInterface
     public function __construct()
     {
         $this->clients = new \SplObjectStorage;
-        echo "Starting websocket chat-server\n";
+        echo "Creating websocket chat-server\n";
     }
 
     public function __destruct()
