@@ -1,6 +1,7 @@
 <?php
 
 echo "Starting php-server\n";
+
 use Ratchet\Server\IoServer;
 use Ratchet\Http\HttpServer;
 use Ratchet\Websocket\WsServer;
