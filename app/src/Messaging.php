@@ -63,7 +63,9 @@ class Messaging implements MessageComponentInterface
 
         foreach ($this->clients as $client) {
             $clientData                          = $this->clients[$client];
-            $currentPlayers[$clientData['name']] = $clientData['pos'];
+            if ($clientData['name']) {
+                $currentPlayers[$clientData['name']] = $clientData['pos'];
+            }
         }
 
         $newPlayerPos = getRandomPos($geom, $currentPlayers);
@@ -73,6 +75,7 @@ class Messaging implements MessageComponentInterface
             'name' => $newPlayer,
             'pos' => $newPlayerPos,
             'geom' => $geom,
+            'currentPlayers' => $currentPlayers,
         ];
 
         $newPlayerData = [
