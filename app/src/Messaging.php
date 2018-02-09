@@ -62,7 +62,7 @@ class Messaging implements MessageComponentInterface
         $currentPlayers = [];
 
         foreach ($this->clients as $client) {
-            $clientData                          = $this->clients[$client];
+            $clientData = $this->clients[$client];
             if ($clientData['name']) {
                 $currentPlayers[$clientData['name']] = $clientData['pos'];
             }
@@ -84,7 +84,7 @@ class Messaging implements MessageComponentInterface
         ];
 
         $oldPlayerMsg         = $newPlayerData;
-        $oldPlayerMsg['type'] = 'newplayer';
+        $oldPlayerMsg['type'] = 'playerconnect';
 
         $conn->send(json_encode($newPlayerMsg));
 
@@ -155,14 +155,18 @@ class Messaging implements MessageComponentInterface
     }
 
     public function onClose(ConnectionInterface $conn) {
+        $playerData = $this->clients[$conn];
         $this->clients->detach($conn);
         echo "Connection {$conn->resourcceId} has disconnected\n";
-        flush();
+        $this->broadcast(json_encode([
+                                         'type' => 'playerdisconnect',
+                                         'name' => $playerData['name'],
+                                     ]));
     }
 
     public function onError(ConnectionInterface $conn, \Exception $e) {
         echo "An error has occured: {$e->getMessage()}\n";
-        flush();
+        $this->onClose($conn);
         $conn->close();
     }
 
