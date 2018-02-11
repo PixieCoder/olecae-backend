@@ -5,39 +5,6 @@ namespace OlecaeBackend;
 use Ratchet\MessageComponentInterface;
 use Ratchet\ConnectionInterface;
 
-function getGeometry() {
-    return [
-        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1],
-        [1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-    ];
-}
-
-function getRandomPos($geom, $currentPlayers) {
-    $possibilities = [];
-    foreach ($geom as $y => $row) {
-        foreach ($row as $x => $val) {
-            if ($val === 0) {
-                $possibilities[] = ['x' => $x, 'y' => $y];
-            }
-        }
-    }
-    $idx = rand(0, count($possibilities));
-    return $possibilities[$idx];
-}
 
 function getPlayerName() {
     static $currentPlayerNum = 0;
@@ -47,61 +14,56 @@ function getPlayerName() {
 class Messaging implements MessageComponentInterface
 {
     protected $clients;
+    protected $gameState;
 
-    public function __construct() {
-        $this->clients = new \SplObjectStorage;
+    public function __construct(GameState $gameState) {
+        $this->gameState = $gameState;
+        $this->clients   = new \SplObjectStorage;
         echo "Creating websocket chat-server\n";
         flush();
     }
 
     public function onOpen(ConnectionInterface $conn) {
+
         $this->clients->attach($conn);
 
         $newPlayer      = getPlayerName();
-        $geom           = getGeometry();
-        $currentPlayers = [];
+        $currentPlayers = $this->gameState->getPlayers();
 
-        foreach ($this->clients as $client) {
-            $clientData = $this->clients[$client];
-            if ($clientData['name']) {
-                $currentPlayers[$clientData['name']] = $clientData['pos'];
-            }
+        $newPlayerData = NULL;
+        try {
+            $newPlayerData = $this->gameState->addPlayer($newPlayer);
         }
-
-        $newPlayerPos = getRandomPos($geom, $currentPlayers);
+        catch (\Exception $ex) {
+            $conn->close();
+            $this->log(FALSE, $newPlayer, $ex);
+            return;
+        }
 
         $newPlayerMsg = [
             'type' => 'welcome',
             'name' => $newPlayer,
-            'pos' => $newPlayerPos,
-            'geom' => $geom,
+            'data' => $newPlayerData,
+            'geom' => $this->gameState->getGeometry(),
             'currentPlayers' => $currentPlayers,
         ];
 
-        $newPlayerData = [
+        $oldPlayerMsg = [
+            'type' => 'playerconnect',
             'name' => $newPlayer,
-            'pos' => $newPlayerPos,
+            'data' => $newPlayerData,
         ];
-
-        $oldPlayerMsg         = $newPlayerData;
-        $oldPlayerMsg['type'] = 'playerconnect';
 
         $conn->send(json_encode($newPlayerMsg));
 
-        $this->clients[$conn] = $newPlayerData;
+        $this->clients[$conn] = $newPlayer;
+        $this->broadcast($oldPlayerMsg, $conn);
 
-        foreach ($this->clients as $client) {
-            if ($client !== $conn) {
-                $client->send(json_encode($oldPlayerMsg));
-            }
-        }
         $this->log(TRUE, $newPlayer, "New connection! ({$conn->resourceId})\n");
-        //echo "New connection! ({$conn->resourceId})\n";
     }
 
     public function onMessage(ConnectionInterface $from, $msg) {
-        $player     = $this->clients[$from];
-        $playerName = $player['name'];
+        $playerName = $this->clients[$from];
         $decodedMsg = json_decode($msg, TRUE);
 
         if (!is_array($decodedMsg)) {
@@ -116,35 +78,34 @@ class Messaging implements MessageComponentInterface
         switch ($decodedMsg['type']) {
             case 'msg':
                 if (array_key_exists('text', $decodedMsg)) {
-                    $encodedMsg = json_encode(['type' => 'msg',
-                                               'from' => $playerName,
-                                               'text' => $decodedMsg['text']]);
-                    $this->broadcast($encodedMsg, $from);
+                    $msg = ['type' => 'msg',
+                            'from' => $playerName,
+                            'text' => $decodedMsg['text']];
+                    $this->broadcast($msg, $from);
                     $this->log(TRUE, $playerName, $decodedMsg);
                 }
                 else $this->log(FALSE, "$playerName, no text", $decodedMsg);
                 break;
+            case 'turn':
+                if (array_key_exists('dir', $decodedMsg)) {
+                    $dir               = $decodedMsg['dir'];
+                    $resultMsg         = $this->gameState->turn($playerName, $dir);
+                    $resultMsg['type'] = 'turn';
+                    $this->broadcast($resultMsg);
+                }
+                else $this->log(FALSE, "$playerName, no dir", $decodedMsg);
+                break;
             case 'move':
                 if (array_key_exists('pos', $decodedMsg)) {
-                    $geom = getGeometry();
-                    list('x' => $x, 'y' => $y) = $decodedMsg['pos'];
-                    list('x' => $oldX, 'y' => $oldY) = $player['pos'];
-                    if ($geom[$y][$x] === 0) {
-                        $this->broadcast(json_encode([
-                                                         'type' => 'move',
-                                                         'name' => $playerName,
-                                                         'pos' => ['x' => $x, 'y' => $y],
-                                                         'oldPos' => ['x' => $oldX, 'y' => $oldY],
-                                                     ]));
-                        $this->log(TRUE, $playerName, "Move to [$x, $y]\n");
-
+                    $pos       = $decodedMsg['pos'];
+                    $resultMsg = $this->gameState->move($playerName, $pos);
+                    if (!array_key_exists('text', $resultMsg)) {
+                        $resultMsg['type'] = 'move';
+                        $this->broadcast($resultMsg);
                     }
                     else {
-                        $denied = json_encode([
-                                                  'type' => 'move',
-                                                  'status' => 'denied',
-                                              ]);
-                        $from->send($denied);
+                        $resultMsg['type'] = 'msg';
+                        $from->send(json_encode($resultMsg));
                     }
                 }
                 else $this->log(FALSE, "$playerName, no pos", $decodedMsg);
@@ -155,13 +116,10 @@ class Messaging implements MessageComponentInterface
     }
 
     public function onClose(ConnectionInterface $conn) {
-        $playerData = $this->clients[$conn];
+        $playerName = $this->clients[$conn];
         $this->clients->detach($conn);
         echo "Connection {$conn->resourcceId} has disconnected\n";
-        $this->broadcast(json_encode([
-                                         'type' => 'playerdisconnect',
-                                         'name' => $playerData['name'],
-                                     ]));
+        $this->broadcast(['type' => 'playerdisconnect', 'name' => $playerName]);
     }
 
     public function onError(ConnectionInterface $conn, \Exception $e) {
@@ -171,9 +129,10 @@ class Messaging implements MessageComponentInterface
     }
 
     protected function broadcast($msg, $exclude = NULL) {
+        $encodedMsg = json_encode($msg);
         foreach ($this->clients as $client) {
             if ($exclude !== $client) {
-                $client->send($msg);
+                $client->send($encodedMsg);
             }
         }
     }
